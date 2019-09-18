@@ -397,6 +397,9 @@ namespace ServiceStack.OrmLite
             return $"{GetQuotedName(escapedSchema)}.{GetQuotedName(NamingStrategy.GetTableName(tableName))}";
         }
 
+        public virtual string GetQuotedTableName(string tableName, string schema, bool useStrategy) => 
+            GetQuotedName(GetTableName(tableName, schema, useStrategy));
+
         public virtual string GetQuotedColumnName(string columnName)
         {
             return GetQuotedName(NamingStrategy.GetColumnName(columnName));
@@ -1328,7 +1331,7 @@ namespace ServiceStack.OrmLite
         public virtual string GetUniqueConstraints(ModelDefinition modelDef)
         {
             var constraints = modelDef.UniqueConstraints.Map(x => 
-                $"CONSTRAINT {GetUniqueConstraintName(x, GetTableName(modelDef))} UNIQUE ({x.FieldNames.Map(f => modelDef.GetQuotedName(f,this)).Join(",")})" );
+                $"CONSTRAINT {GetUniqueConstraintName(x, GetTableName(modelDef).StripQuotes())} UNIQUE ({x.FieldNames.Map(f => modelDef.GetQuotedName(f,this)).Join(",")})" );
 
             return constraints.Count > 0
                 ? constraints.Join(",\n")
