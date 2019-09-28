@@ -399,7 +399,7 @@ namespace ServiceStack.OrmLite.Dapper
                 return DynamicParameters.EnumerableMultiParameter;
             }
 
-#if !NETSTANDARD1_3 && !NETSTANDARD2_0
+#if !NETSTANDARD1_3 && !NETSTANDARD2_1
             switch (type.FullName)
             {
                 case "Microsoft.SqlServer.Types.SqlGeography":

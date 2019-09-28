@@ -4,7 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using ServiceStack.DataAnnotations;
-#if NETSTANDARD2_0
+#if NETSTANDARD2_1
 using System.Globalization;
 #endif
 

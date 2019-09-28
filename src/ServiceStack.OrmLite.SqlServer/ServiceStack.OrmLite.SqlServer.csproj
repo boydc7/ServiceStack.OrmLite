@@ -3,7 +3,6 @@
   <PropertyGroup>
     <PackageId>ServiceStack.OrmLite.SqlServer</PackageId>
     <AssemblyName>ServiceStack.OrmLite.SqlServer</AssemblyName>
-    <TargetFrameworks>netstandard2.0</TargetFrameworks>
     <Title>OrmLite.SqlServer - Fast, code-first, config-free POCO ORM</Title>
     <PackageDescription>
       Light, simple and fast convention-based code-first POCO ORM for Sql Server.
@@ -11,13 +10,14 @@
     </PackageDescription>
     <PackageTags>SQLServer;OrmLite;RDBMS;SQL;POCO;Code-First;ORM;Schema-less;Blobs</PackageTags>
     <DefineConstants>$(DefineConstants);ASYNC</DefineConstants>
+    <TargetFramework>netstandard2.1</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ServiceStack.OrmLite\ServiceStack.OrmLite.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition=" '$(TargetFramework)' == 'netstandard2.0' ">
+  <ItemGroup Condition=" '$(TargetFramework)' == 'netstandard2.1' ">
     <PackageReference Include="System.Data.SqlClient" Version="4.7.0" />
   </ItemGroup>
 

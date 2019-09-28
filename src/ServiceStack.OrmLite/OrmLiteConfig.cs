@@ -150,7 +150,7 @@ namespace ServiceStack.OrmLite
         
         public static bool DisableColumnGuessFallback { get; set; }
         public static bool StripUpperInLike { get; set; } 
-#if NETSTANDARD2_0
+#if NETSTANDARD2_1
             = true;
 #endif
 
