@@ -60,6 +60,7 @@ namespace ServiceStack.OrmLite.PostgreSQL
 
             //TODO provide support for pgsql native data structures:
             RegisterConverter<string[]>(new PostgreSqlStringArrayConverter());
+            RegisterConverter<short[]>(new PostgreSqlShortArrayConverter());
             RegisterConverter<int[]>(new PostgreSqlIntArrayConverter());
             RegisterConverter<long[]>(new PostgreSqlLongArrayConverter());
             RegisterConverter<float[]>(new PostgreSqlFloatArrayConverter());
@@ -67,6 +68,8 @@ namespace ServiceStack.OrmLite.PostgreSQL
             RegisterConverter<decimal[]>(new PostgreSqlDecimalArrayConverter());
             RegisterConverter<DateTime[]>(new PostgreSqlDateTimeTimeStampArrayConverter());
             RegisterConverter<DateTimeOffset[]>(new PostgreSqlDateTimeOffsetTimeStampTzArrayConverter());
+            
+            RegisterConverter<XmlValue>(new PostgreSqlXmlConverter());
 
             this.Variables = new Dictionary<string, string>
             {
@@ -259,6 +262,16 @@ namespace ServiceStack.OrmLite.PostgreSQL
             return fieldDef.FieldType == typeof(Guid)
                 ? AutoIdGuidFunction
                 : null;
+        }
+
+        public override bool IsFullSelectStatement(string sql)
+        {
+            sql = sql?.TrimStart();
+            if (string.IsNullOrEmpty(sql)) 
+                return false;
+            
+            return sql.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) ||
+                   sql.StartsWith("WITH ", StringComparison.OrdinalIgnoreCase);
         }
 
         protected override bool ShouldSkipInsert(FieldDefinition fieldDef) => 
@@ -564,6 +577,7 @@ namespace ServiceStack.OrmLite.PostgreSQL
             { "jsonb", NpgsqlDbType.Jsonb },
             { "hstore", NpgsqlDbType.Hstore },
             { "text[]", NpgsqlDbType.Array | NpgsqlDbType.Text },
+            { "short[]", NpgsqlDbType.Array | NpgsqlDbType.Smallint },
             { "integer[]", NpgsqlDbType.Array | NpgsqlDbType.Integer },
             { "bigint[]", NpgsqlDbType.Array | NpgsqlDbType.Bigint },
             { "real[]", NpgsqlDbType.Array | NpgsqlDbType.Real },
