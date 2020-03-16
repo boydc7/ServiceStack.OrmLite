@@ -14,7 +14,7 @@ namespace ServiceStack.OrmLite.SqlServer
 
         public override bool DoesSequenceExist(IDbCommand dbCmd, string sequenceName)
         {
-            var sql = "SELECT EXISTS(SELECT 1 FROM SYS.SEQUENCES WHERE object_id=object_id({0}))"
+            var sql = "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.sequences WHERE object_id=object_id({0})) THEN 1 ELSE 0 END"
                 .SqlFmt(this, sequenceName);
 
             dbCmd.CommandText = sql;
@@ -120,6 +120,10 @@ namespace ServiceStack.OrmLite.SqlServer
             if (fieldDef.IsPrimaryKey)
             {
                 sql.Append(" PRIMARY KEY");
+
+                if (fieldDef.IsNonClustered)
+                    sql.Append(" NONCLUSTERED");
+ 
                 if (fieldDef.AutoIncrement)
                 {
                     sql.Append(" ").Append(AutoIncrementDefinition);
@@ -158,7 +162,7 @@ namespace ServiceStack.OrmLite.SqlServer
             {
                 foreach (var fieldDef in modelDef.FieldDefinitions)
                 {
-                    if (fieldDef.CustomSelect != null)
+                    if (fieldDef.CustomSelect != null || (fieldDef.IsComputed && !fieldDef.IsPersisted))
                         continue;
 
                     var columnDefinition = GetColumnDefinition(fieldDef);

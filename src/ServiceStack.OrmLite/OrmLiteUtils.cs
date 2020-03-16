@@ -13,6 +13,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Dynamic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -818,9 +819,9 @@ namespace ServiceStack.OrmLite
             return StringBuilderCache.ReturnAndFree(sb).Trim();
         }
 
-        public static char[] QuotedChars = new[] { '"', '`', '[', ']' };
+        public static char[] QuotedChars = { '"', '`', '[', ']' };
 
-        public static string StripQuotes(this string quotedExpr)
+        public static string StripDbQuotes(this string quotedExpr)
         {
             return quotedExpr.Trim(QuotedChars);
         }
@@ -937,7 +938,7 @@ namespace ServiceStack.OrmLite
                 if (map.TryGetValue(pkValue, out refValues))
                 {
                     var castResults = untypedApi.Cast(refValues);
-                    fieldDef.SetValueFn(result, castResults);
+                    fieldDef.SetValue(result, castResults);
                 }
             }
         }
@@ -956,7 +957,7 @@ namespace ServiceStack.OrmLite
                 var fkValue = refSelf.GetValue(result);
                 if (fkValue != null && map.TryGetValue(fkValue, out var childResult))
                 {
-                    fieldDef.SetValueFn(result, childResult);
+                    fieldDef.SetValue(result, childResult);
                 }
             }
         }
@@ -977,7 +978,7 @@ namespace ServiceStack.OrmLite
                 var pkValue = modelDef.PrimaryKey.GetValue(result);
                 if (map.TryGetValue(pkValue, out var childResult))
                 {
-                    fieldDef.SetValueFn(result, childResult);
+                    fieldDef.SetValue(result, childResult);
                 }
             }
         }
@@ -985,11 +986,22 @@ namespace ServiceStack.OrmLite
         [Obsolete("Use dialectProvider.GetNonDefaultValueInsertFields()")]
         public static List<string> GetNonDefaultValueInsertFields<T>(T obj)
         {
-            return OrmLiteConfig.DialectProvider.GetNonDefaultValueInsertFields(obj);
+            return OrmLiteConfig.DialectProvider.GetNonDefaultValueInsertFields<T>(obj);
         }
         
-        public static List<string> GetNonDefaultValueInsertFields<T>(this IOrmLiteDialectProvider dialectProvider, T obj)
+        public static void AssertNotAnonType<T>()
         {
+            if (typeof(T) == typeof(object))
+                throw new ArgumentException("T generic argument should be a Table but was typeof(object)");
+            
+            if (typeof(T) == typeof(Dictionary<string,object>))
+                throw new ArgumentException("T generic argument should be a Table but was typeof(Dictionary<string,object>)");
+        }
+
+        public static List<string> GetNonDefaultValueInsertFields<T>(this IOrmLiteDialectProvider dialectProvider, object obj)
+        {
+            AssertNotAnonType<T>();
+            
             var insertFields = new List<string>();
             var modelDef = typeof(T).GetModelDefinition();
             foreach (var fieldDef in modelDef.FieldDefinitionsArray)
@@ -1117,5 +1129,6 @@ namespace ServiceStack.OrmLite
             ? text
             : "'" + text + "'";
 
+        public static string UnquotedColumnName(string columnExpr) => columnExpr.LastRightPart('.').StripDbQuotes();
     }
 }

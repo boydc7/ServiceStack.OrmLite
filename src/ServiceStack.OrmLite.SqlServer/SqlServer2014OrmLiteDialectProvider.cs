@@ -59,13 +59,6 @@ namespace ServiceStack.OrmLite.SqlServer
                     sql.Append($" HASH WITH (BUCKET_COUNT = {bucketCount.Value})");
                 }
             }
-            else if (!isMemoryTable && fieldDef.IsUniqueIndex)
-            {
-                sql.Append(" UNIQUE");
-
-                if (fieldDef.IsNonClustered)
-                    sql.Append(" NONCLUSTERED");
-            }
             else
             {
                 if (isMemoryTable && bucketCount.HasValue)
@@ -114,7 +107,7 @@ namespace ServiceStack.OrmLite.SqlServer
             {
                 foreach (var fieldDef in modelDef.FieldDefinitions)
                 {
-                    if (fieldDef.CustomSelect != null)
+                    if (fieldDef.CustomSelect != null || (fieldDef.IsComputed && !fieldDef.IsPersisted))
                         continue;
 
                     var columnDefinition = GetColumnDefinition(fieldDef);

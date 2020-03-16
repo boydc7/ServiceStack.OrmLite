@@ -107,6 +107,7 @@ namespace ServiceStack.OrmLite
             to.Rows = Rows;
             to.tableDefs = tableDefs;
             to.UseSelectPropertiesAsAliases = UseSelectPropertiesAsAliases;
+            to.hasEnsureConditions = hasEnsureConditions;
             return to;
         }
 
@@ -564,12 +565,98 @@ namespace ServiceStack.OrmLite
 
         protected SqlExpression<T> AppendToWhere(string condition, string sqlExpression)
         {
-            whereExpression = string.IsNullOrEmpty(whereExpression)
-                ? (WhereStatementWithoutWhereString ? "" : "WHERE ")
-                : whereExpression + " " + condition + " ";
+            var addExpression = string.IsNullOrEmpty(whereExpression)
+                ? (WhereStatementWithoutWhereString ? "" : "WHERE ") + sqlExpression
+                : " " + condition + " " + sqlExpression;
 
-            whereExpression += sqlExpression;
+            if (!hasEnsureConditions)
+            {
+                whereExpression += addExpression;
+            }
+            else
+            {
+                if (whereExpression[whereExpression.Length - 1] != ')')
+                    throw new NotSupportedException("Invalid whereExpression Expression with Ensure Conditions");
+
+                // insert before normal WHERE parens: {EnsureConditions} AND (1+1)
+                if (whereExpression.EndsWith(TrueLiteral, StringComparison.Ordinal)) // insert before ^1+1)
+                {
+                    whereExpression = whereExpression.Substring(0, whereExpression.Length - (TrueLiteral.Length - 1))
+                                    + sqlExpression + ")";
+                }
+                else // insert before ^)
+                {
+                    whereExpression = whereExpression.Substring(0, whereExpression.Length - 1) 
+                                    + addExpression + ")";
+                }
+            }
             return this;
+        }
+
+        public virtual SqlExpression<T> Ensure(Expression<Func<T, bool>> predicate) => AppendToEnsure(predicate);
+        public virtual SqlExpression<T> Ensure<Target>(Expression<Func<Target, bool>> predicate) => AppendToEnsure(predicate);
+        public virtual SqlExpression<T> Ensure<Source, Target>(Expression<Func<Source, Target, bool>> predicate) => AppendToEnsure(predicate);
+        public virtual SqlExpression<T> Ensure<T1, T2, T3>(Expression<Func<T1, T2, T3, bool>> predicate) => AppendToEnsure(predicate);
+        public virtual SqlExpression<T> Ensure<T1, T2, T3, T4>(Expression<Func<T1, T2, T3, T4, bool>> predicate) => AppendToEnsure(predicate);
+        public virtual SqlExpression<T> Ensure<T1, T2, T3, T4, T5>(Expression<Func<T1, T2, T3, T4, T5, bool>> predicate) => AppendToEnsure(predicate);
+        
+        protected SqlExpression<T> AppendToEnsure(Expression predicate)
+        {
+            if (predicate == null)
+                return this;
+
+            var newExpr = WhereExpressionToString(Visit(predicate));
+            return Ensure(newExpr);
+        }
+
+        private bool hasEnsureConditions = false;
+        /// <summary>
+        /// Add a WHERE Condition to always be applied, irrespective of other WHERE conditions 
+        /// </summary>
+        public SqlExpression<T> Ensure(string sqlFilter, params object[] filterParams)
+        {
+            var condition = FormatFilter(sqlFilter, filterParams);
+            if (string.IsNullOrEmpty(whereExpression))
+            {
+                whereExpression = "WHERE " + condition 
+                    + " AND " + TrueLiteral; //allow subsequent WHERE conditions to be inserted before parens
+            }
+            else
+            {
+                if (!hasEnsureConditions)
+                {
+                    var existingExpr = whereExpression.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase)
+                        ? whereExpression.Substring("WHERE ".Length)
+                        : whereExpression;
+
+                    whereExpression = "WHERE " + condition + " AND (" + existingExpr + ")";
+                }
+                else
+                {
+                    if (!whereExpression.StartsWith("WHERE ", StringComparison.OrdinalIgnoreCase))
+                        throw new NotSupportedException("Invalid whereExpression Expression with Ensure Conditions");
+
+                    whereExpression = "WHERE " + condition + " AND " + whereExpression.Substring("WHERE ".Length);
+                }
+            }
+
+            hasEnsureConditions = true;
+            return this;
+        }
+
+        private string ListExpression(Expression expr, string strExpr)
+        {
+            if (expr is LambdaExpression lambdaExpr)
+            {
+                if (lambdaExpr.Parameters.Count == 1 && lambdaExpr.Body is MemberExpression me)
+                {
+                    var tableDef = lambdaExpr.Parameters[0].Type.GetModelMetadata();
+                    var fieldDef = tableDef?.GetFieldDefinition(me.Member.Name);
+                    if (fieldDef != null)
+                        return DialectProvider.GetQuotedColumnName(tableDef, me.Member.Name);
+                }
+            }
+            return strExpr;
         }
 
         public virtual SqlExpression<T> GroupBy()
@@ -585,16 +672,20 @@ namespace ServiceStack.OrmLite
             return this;
         }
 
-        private SqlExpression<T> InternalGroupBy(Expression keySelector)
+        private SqlExpression<T> InternalGroupBy(Expression expr)
         {
             Reset(sep=string.Empty);
 
-            var groupByKey = Visit(keySelector);
-            if (IsSqlClass(groupByKey))
+            var groupByExpr = Visit(expr);
+            if (IsSqlClass(groupByExpr))
             {
-                StripAliases(groupByKey as SelectList); // No "AS ColumnAlias" in GROUP BY, just the column names/expressions
+                StripAliases(groupByExpr as SelectList); // No "AS ColumnAlias" in GROUP BY, just the column names/expressions
 
-                return GroupBy(groupByKey.ToString());
+                return GroupBy(groupByExpr.ToString());
+            }
+            if (groupByExpr is string strExpr)
+            {
+                return GroupBy(ListExpression(expr, strExpr));
             }
 
             return this;
@@ -809,17 +900,21 @@ namespace ServiceStack.OrmLite
         public virtual SqlExpression<T> OrderBy<Table1, Table2, Table3, Table4>(Expression<Func<Table1, Table2, Table3, Table4, object>> fields) => OrderByInternal(fields);
         public virtual SqlExpression<T> OrderBy<Table1, Table2, Table3, Table4, Table5>(Expression<Func<Table1, Table2, Table3, Table4, Table5, object>> fields) => OrderByInternal(fields);
 
-        private SqlExpression<T> OrderByInternal(Expression keySelector)
+        private SqlExpression<T> OrderByInternal(Expression expr)
         {
             Reset(sep=string.Empty);
 
             orderByProperties.Clear();
-            var orderBySql = Visit(keySelector);
+            var orderBySql = Visit(expr);
             if (IsSqlClass(orderBySql))
             {
                 var fields = orderBySql.ToString();
                 orderByProperties.Add(fields);
                 BuildOrderByClauseInternal();
+            }
+            else if (orderBySql is string strExpr)
+            {
+                return GroupBy(ListExpression(expr, strExpr));
             }
             return this;
         }
@@ -1213,8 +1308,10 @@ namespace ServiceStack.OrmLite
 
             foreach (var fieldDef in modelDef.FieldDefinitions)
             {
-                if (fieldDef.ShouldSkipUpdate()) continue;
-                if (fieldDef.IsRowVersion) continue;
+                if (fieldDef.ShouldSkipUpdate()) 
+                    continue;
+                if (fieldDef.IsRowVersion) 
+                    continue;
                 if (UpdateFields.Count > 0
                     && !UpdateFields.Contains(fieldDef.Name)) continue; // added
 
@@ -1251,12 +1348,15 @@ namespace ServiceStack.OrmLite
 
             foreach (var entry in updateFields)
             {
-                var fieldDef = ModelDef.GetFieldDefinition(entry.Key);
-                if (fieldDef.ShouldSkipUpdate()) continue;
-                if (fieldDef.IsRowVersion) continue;
+                var fieldDef = ModelDef.AssertFieldDefinition(entry.Key);
+                if (fieldDef.ShouldSkipUpdate()) 
+                    continue;
+                if (fieldDef.IsRowVersion) 
+                    continue;
 
                 if (UpdateFields.Count > 0
-                    && !UpdateFields.Contains(fieldDef.Name)) continue; // added
+                    && !UpdateFields.Contains(fieldDef.Name)) // added 
+                    continue;
 
                 var value = entry.Value;
                 if (value == null && !fieldDef.IsNullable)
@@ -1957,7 +2057,7 @@ namespace ServiceStack.OrmLite
             // When selecting a column use the anon type property name, rather than the table property name, as the returned column name
             if (arg is MemberExpression propExpr && IsLambdaArg(propExpr.Expression))
             {
-                if (UseSelectPropertiesAsAliases ||                    // Use anon property alias when explicitly requested
+                if (UseSelectPropertiesAsAliases ||                  // Use anon property alias when explicitly requested
                     propExpr.Member.Name != member.Name ||           // or when names don't match 
                     propExpr.Expression.Type != ModelDef.ModelType)  // or when selecting a field from a different table
                     return new SelectItemExpression(DialectProvider, expr.ToString(), member.Name);
@@ -2008,7 +2108,9 @@ namespace ServiceStack.OrmLite
                     ? converter.ToQuotedString(expr.GetType(), expr)
                     : expr.ToString();
                 
-                return new PartialSqlString(strExpr + " AS " + member.Name);
+                return new PartialSqlString(OrmLiteUtils.UnquotedColumnName(strExpr) != member.Name 
+                    ? strExpr + " AS " + member.Name 
+                    : strExpr);
             } 
 
             return UseSelectPropertiesAsAliases
@@ -2026,6 +2128,17 @@ namespace ServiceStack.OrmLite
                 if (item is SelectItem selectItem)
                 {
                     selectItem.Alias = null;
+                }
+                else if (item is PartialSqlString p)
+                {
+                    if (p.Text.IndexOf(' ') >= 0)
+                    {
+                        var right = p.Text.RightPart(' ');
+                        if (right.StartsWithIgnoreCase("AS "))
+                        {
+                            p.Text = p.Text.LeftPart(' ');
+                        }
+                    }
                 }
             }
         }
@@ -2433,7 +2546,7 @@ namespace ServiceStack.OrmLite
         protected virtual bool IsFieldName(object quotedExp)
         {
             var fieldExpr = quotedExp.ToString().StripTablePrefixes();
-            var unquotedExpr = fieldExpr.StripQuotes();
+            var unquotedExpr = fieldExpr.StripDbQuotes();
 
             var isTableField = modelDef.FieldDefinitionsArray
                 .Any(x => GetColumnName(x.FieldName) == unquotedExpr);
@@ -2710,6 +2823,11 @@ namespace ServiceStack.OrmLite
                     }
                 }
 
+                // regex replace doesn't work when param is at end of string "AND a = :0"
+                var lastChar = subSelect[subSelect.Length - 1];
+                if (!(char.IsWhiteSpace(lastChar) || lastChar == ')'))
+                    subSelect += " ";
+                
                 for (var i = renameParams.Count - 1; i >= 0; i--)
                 {
                     //Replace complete db params [@1] and not partial tokens [@1]0
@@ -2855,7 +2973,7 @@ namespace ServiceStack.OrmLite
         {
             Text = text;
         }
-        public string Text { get; }
+        public string Text { get; internal set; }
         public override string ToString() => Text;
     }
 

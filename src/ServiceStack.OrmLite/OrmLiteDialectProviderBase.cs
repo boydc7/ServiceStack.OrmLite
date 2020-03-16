@@ -10,6 +10,7 @@
 //
 
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
@@ -705,7 +706,7 @@ namespace ServiceStack.OrmLite
 
             foreach (var entry in args)
             {
-                var fieldDef = modelDef.GetFieldDefinition(entry.Key);
+                var fieldDef = modelDef.AssertFieldDefinition(entry.Key);
                 if (fieldDef.ShouldSkipInsert())
                     continue;
 
@@ -946,13 +947,13 @@ namespace ServiceStack.OrmLite
 
                 if (fieldDef.AutoId && p.Value != null)
                 {
-                    var existingId = fieldDef.GetValueFn(obj);
+                    var existingId = fieldDef.GetValue(obj);
                     if (existingId is Guid existingGuid && existingGuid != default(Guid))
                     {
                         p.Value = existingGuid; // Use existing value if not default
                     }
 
-                    fieldDef.SetValueFn(obj, p.Value); //Auto populate default values
+                    fieldDef.SetValue(obj, p.Value); //Auto populate default values
                     continue;
                 }
                 
@@ -979,11 +980,7 @@ namespace ServiceStack.OrmLite
 
         protected virtual object GetValue<T>(FieldDefinition fieldDef, object obj)
         {
-            var value = obj is T
-               ? fieldDef.GetValue(obj)
-               : GetAnonValue(fieldDef, obj);
-
-            return GetFieldValue(fieldDef, value);
+            return GetFieldValue(fieldDef, fieldDef.GetValue(obj));
         }
 
         public object GetFieldValue(FieldDefinition fieldDef, object value)
@@ -1031,9 +1028,7 @@ namespace ServiceStack.OrmLite
 
         protected virtual object GetQuotedValueOrDbNull<T>(FieldDefinition fieldDef, object obj)
         {
-            var value = obj is T
-                ? fieldDef.GetValue(obj)
-                : GetAnonValue(fieldDef, obj);
+            var value = fieldDef.GetValue(obj);
 
             if (value == null)
                 return DBNull.Value;
@@ -1045,22 +1040,6 @@ namespace ServiceStack.OrmLite
                 return DBNull.Value;
 
             return unquotedVal;
-        }
-
-        static readonly ConcurrentDictionary<string, GetMemberDelegate> anonValueFnMap =
-            new ConcurrentDictionary<string, GetMemberDelegate>();
-
-        protected virtual object GetAnonValue(FieldDefinition fieldDef, object obj)
-        {
-            var anonType = obj.GetType();
-            var key = anonType.Name + "." + fieldDef.Name;
-
-            var factoryFn = (Func<string, GetMemberDelegate>)(_ =>
-                anonType.GetProperty(fieldDef.Name).CreateGetter());
-
-            var getterFn = anonValueFnMap.GetOrAdd(key, factoryFn);
-
-            return getterFn(obj);
         }
 
         public virtual void PrepareUpdateRowStatement(IDbCommand dbCmd, object objWithProperties, ICollection<string> updateFields = null)
@@ -1122,7 +1101,7 @@ namespace ServiceStack.OrmLite
 
             foreach (var entry in args)
             {
-                var fieldDef = modelDef.GetFieldDefinition(entry.Key);
+                var fieldDef = modelDef.AssertFieldDefinition(entry.Key);
                 if (fieldDef.ShouldSkipUpdate() || fieldDef.IsPrimaryKey || fieldDef.AutoIncrement)
                     continue;
 
@@ -1158,7 +1137,7 @@ namespace ServiceStack.OrmLite
 
             foreach (var entry in args)
             {
-                var fieldDef = modelDef.GetFieldDefinition(entry.Key);
+                var fieldDef = modelDef.AssertFieldDefinition(entry.Key);
                 if (fieldDef.ShouldSkipUpdate() || fieldDef.AutoIncrement || fieldDef.IsPrimaryKey ||
                     fieldDef.IsRowVersion || fieldDef.Name == OrmLiteConfig.IdField)
                     continue;
@@ -1234,7 +1213,7 @@ namespace ServiceStack.OrmLite
         public string GetDefaultValue(Type tableType, string fieldName)
         {
             var modelDef = tableType.GetModelDefinition();
-            var fieldDef = modelDef.GetFieldDefinition(fieldName);
+            var fieldDef = modelDef.AssertFieldDefinition(fieldName);
             return GetDefaultValue(fieldDef);
         }
 
@@ -1282,7 +1261,7 @@ namespace ServiceStack.OrmLite
             var modelDef = tableType.GetModelDefinition();
             foreach (var fieldDef in CreateTableFieldsStrategy(modelDef))
             {
-                if (fieldDef.CustomSelect != null)
+                if (fieldDef.CustomSelect != null || (fieldDef.IsComputed && !fieldDef.IsPersisted))
                     continue;
 
                 var columnDefinition = GetColumnDefinition(fieldDef);
@@ -1329,7 +1308,7 @@ namespace ServiceStack.OrmLite
         public virtual string GetUniqueConstraints(ModelDefinition modelDef)
         {
             var constraints = modelDef.UniqueConstraints.Map(x => 
-                $"CONSTRAINT {GetUniqueConstraintName(x, GetTableName(modelDef).StripQuotes())} UNIQUE ({x.FieldNames.Map(f => modelDef.GetQuotedName(f,this)).Join(",")})" );
+                $"CONSTRAINT {GetUniqueConstraintName(x, GetTableName(modelDef).StripDbQuotes())} UNIQUE ({x.FieldNames.Map(f => modelDef.GetQuotedName(f,this)).Join(",")})" );
 
             return constraints.Count > 0
                 ? constraints.Join(",\n")

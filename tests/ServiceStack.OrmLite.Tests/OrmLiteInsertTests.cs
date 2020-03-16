@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.Versioning;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using ServiceStack.Common.Tests.Models;
@@ -9,6 +10,7 @@ using ServiceStack.Text;
 
 namespace ServiceStack.OrmLite.Tests
 {
+
     [TestFixtureOrmLite]
     public class OrmLiteInsertTests : OrmLiteProvidersTestBase
     {
@@ -356,14 +358,7 @@ namespace ServiceStack.OrmLite.Tests
                     MinCustomerBuy = 10
                 };
 
-                var fieldDef = typeof(Market).GetModelMetadata()
-                    .GetFieldDefinition<Market>(x => x.AvailableTotal);
-
-                fieldDef.IsComputed = false;
-
                 db.Insert(market);
-
-                fieldDef.IsComputed = true;
             }
         }
 
@@ -464,6 +459,44 @@ namespace ServiceStack.OrmLite.Tests
                 Assert.That(result.FullName, Is.EqualTo(userAuth.FirstName + " " + userAuth.LastName));
             }
         }
+
+        [Test]
+        public void Can_Insert_ObjectDictionary()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<ModelWithFieldsOfDifferentTypes>();
+
+                var row = ModelWithFieldsOfDifferentTypes.Create(0);
+                var obj = row.ToObjectDictionary();
+
+                row.Id = (int) db.Insert<ModelWithFieldsOfDifferentTypes>(obj, selectIdentity:true);
+                Assert.That(row.Id, Is.Not.EqualTo(0));
+
+                var fromDb = db.SingleById<ModelWithFieldsOfDifferentTypes>(row.Id);
+
+                ModelWithFieldsOfDifferentTypes.AssertIsEqual(fromDb, row);
+            }
+        }
+
+        [Test]
+        public async Task Can_Insert_ObjectDictionary_Async()
+        {
+            using (var db = OpenDbConnection())
+            {
+                db.DropAndCreateTable<ModelWithFieldsOfDifferentTypes>();
+
+                var row = ModelWithFieldsOfDifferentTypes.Create(0);
+                var obj = row.ToObjectDictionary();
+
+                row.Id = (int) await db.InsertAsync<ModelWithFieldsOfDifferentTypes>(obj, selectIdentity:true);
+                Assert.That(row.Id, Is.Not.EqualTo(0));
+
+                var fromDb = await db.SingleByIdAsync<ModelWithFieldsOfDifferentTypes>(row.Id);
+
+                ModelWithFieldsOfDifferentTypes.AssertIsEqual(fromDb, row);
+            }
+        }
         
     }
 
@@ -475,7 +508,7 @@ namespace ServiceStack.OrmLite.Tests
         public int Available { get; set; }
         [Required]
         public int AvailableSalesEvent { get; set; }
-        [Compute]
+        [Compute, Persisted]
         [Required]
         public int AvailableTotal { get; set; }
         [Required]
