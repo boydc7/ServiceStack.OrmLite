@@ -654,7 +654,8 @@ namespace ServiceStack.OrmLite
             return null;
         }
 
-        public virtual void PrepareParameterizedInsertStatement<T>(IDbCommand cmd, ICollection<string> insertFields = null)
+        public virtual void PrepareParameterizedInsertStatement<T>(IDbCommand cmd, ICollection<string> insertFields = null, 
+            Func<FieldDefinition,bool> shouldInclude=null)
         {
             var sbColumnNames = StringBuilderCache.Allocate();
             var sbColumnValues = StringBuilderCacheAlt.Allocate();
@@ -665,7 +666,7 @@ namespace ServiceStack.OrmLite
             var fieldDefs = GetInsertFieldDefinitions(modelDef, insertFields);
             foreach (var fieldDef in fieldDefs)
             {
-                if (fieldDef.ShouldSkipInsert())
+                if (fieldDef.ShouldSkipInsert() && shouldInclude?.Invoke(fieldDef) != true)
                     continue;
 
                 if (sbColumnNames.Length > 0)
@@ -676,7 +677,7 @@ namespace ServiceStack.OrmLite
                 try
                 {
                     sbColumnNames.Append(GetQuotedColumnName(fieldDef.FieldName));
-                    sbColumnValues.Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName)));
+                    sbColumnValues.Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName),fieldDef.CustomInsert));
 
                     var p = AddParameter(cmd, fieldDef);
 
@@ -720,7 +721,7 @@ namespace ServiceStack.OrmLite
                 try
                 {
                     sbColumnNames.Append(GetQuotedColumnName(fieldDef.FieldName));
-                    sbColumnValues.Append(this.AddUpdateParam(dbCmd, value, fieldDef).ParameterName);
+                    sbColumnValues.Append(this.GetInsertParam(dbCmd, value, fieldDef));
                 }
                 catch (Exception ex)
                 {
@@ -811,7 +812,7 @@ namespace ServiceStack.OrmLite
                     sql
                         .Append(GetQuotedColumnName(fieldDef.FieldName))
                         .Append("=")
-                        .Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName)));
+                        .Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName), fieldDef.CustomUpdate));
 
                     AddParameter(cmd, fieldDef);
                 }
@@ -922,6 +923,12 @@ namespace ServiceStack.OrmLite
             p.ParameterName = this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName));
             InitDbParam(p, fieldDef.ColumnType);
         }
+
+        public virtual void EnableIdentityInsert<T>(IDbCommand cmd) {}
+        public virtual Task EnableIdentityInsertAsync<T>(IDbCommand cmd, CancellationToken token=default) => TypeConstants.EmptyTask;
+
+        public virtual void DisableIdentityInsert<T>(IDbCommand cmd) {}
+        public virtual Task DisableIdentityInsertAsync<T>(IDbCommand cmd, CancellationToken token=default) => TypeConstants.EmptyTask;
 
         public virtual void SetParameterValues<T>(IDbCommand dbCmd, object obj)
         {
@@ -1078,7 +1085,7 @@ namespace ServiceStack.OrmLite
                     sql
                         .Append(GetQuotedColumnName(fieldDef.FieldName))
                         .Append("=")
-                        .Append(this.AddUpdateParam(dbCmd, fieldDef.GetValue(objWithProperties), fieldDef).ParameterName);
+                        .Append(this.GetUpdateParam(dbCmd, fieldDef.GetValue(objWithProperties), fieldDef));
                 }
                 catch (Exception ex)
                 {
@@ -1115,7 +1122,7 @@ namespace ServiceStack.OrmLite
                     sql
                         .Append(GetQuotedColumnName(fieldDef.FieldName))
                         .Append("=")
-                        .Append(this.AddUpdateParam(dbCmd, value, fieldDef).ParameterName);
+                        .Append(this.GetUpdateParam(dbCmd, value, fieldDef));
                 }
                 catch (Exception ex)
                 {
@@ -1158,14 +1165,14 @@ namespace ServiceStack.OrmLite
                             .Append("=")
                             .Append(quotedFieldName)
                             .Append("+")
-                            .Append(this.AddUpdateParam(dbCmd, value, fieldDef).ParameterName);
+                            .Append(this.GetUpdateParam(dbCmd, value, fieldDef));
                     }
                     else
                     {
                         sql
                             .Append(quotedFieldName)
                             .Append("=")
-                            .Append(this.AddUpdateParam(dbCmd, value, fieldDef).ParameterName);
+                            .Append(this.GetUpdateParam(dbCmd, value, fieldDef));
                     }
                 }
                 catch (Exception ex)
@@ -1577,7 +1584,8 @@ namespace ServiceStack.OrmLite
 
         public virtual string GetQuotedValue(object value, Type fieldType)
         {
-            if (value == null) return "NULL";
+            if (value == null) 
+                return "NULL";
 
             var converter = value.GetType().IsEnum
                 ? EnumConverter
@@ -1663,34 +1671,34 @@ namespace ServiceStack.OrmLite
         //Async API's, should be overrided by Dialect Providers to use .ConfigureAwait(false)
         //Default impl below uses TaskAwaiter shim in async.cs
 
-        public virtual Task OpenAsync(IDbConnection db, CancellationToken token = default(CancellationToken))
+        public virtual Task OpenAsync(IDbConnection db, CancellationToken token = default)
         {
             db.Open();
             return TaskResult.Finished;
         }
 
-        public virtual Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        public virtual Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default)
         {
             return cmd.ExecuteReader().InTask();
         }
 
-        public virtual Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        public virtual Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default)
         {
             return cmd.ExecuteNonQuery().InTask();
         }
 
-        public virtual Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        public virtual Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token = default)
         {
             return cmd.ExecuteScalar().InTask();
         }
 
-        public virtual Task<bool> ReadAsync(IDataReader reader, CancellationToken token = default(CancellationToken))
+        public virtual Task<bool> ReadAsync(IDataReader reader, CancellationToken token = default)
         {
             return reader.Read().InTask();
         }
 
 #if ASYNC
-        public virtual async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
+        public virtual async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default)
         {
             try
             {
@@ -1708,7 +1716,7 @@ namespace ServiceStack.OrmLite
             }
         }
 
-        public virtual async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = default(CancellationToken))
+        public virtual async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = default)
         {
             try
             {
@@ -1724,7 +1732,7 @@ namespace ServiceStack.OrmLite
             }
         }
 
-        public virtual async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
+        public virtual async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = default)
         {
             try
             {

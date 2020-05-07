@@ -71,7 +71,7 @@ namespace ServiceStack.OrmLite
         {
             OrmLiteUtils.AssertNotAnonType<T>();
             
-            OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, obj);
+            OrmLiteConfig.UpdateFilter?.Invoke(dbCmd, obj.ToFilterType<T>());
 
             var dialectProvider = dbCmd.GetDialectProvider();
             var hadRowVersion = dialectProvider.PrepareParameterizedUpdateStatement<T>(dbCmd);
@@ -300,14 +300,32 @@ namespace ServiceStack.OrmLite
         internal static async Task<long> InsertAsync<T>(this IDbCommand dbCmd, Dictionary<string,object> obj, Action<IDbCommand> commandFilter, bool selectIdentity, CancellationToken token)
         {
             OrmLiteUtils.AssertNotAnonType<T>();
-            
-            OrmLiteConfig.InsertFilter?.Invoke(dbCmd, obj);
+            OrmLiteConfig.InsertFilter?.Invoke(dbCmd, obj.ToFilterType<T>());
 
             var dialectProvider = dbCmd.GetDialectProvider();
-            dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd,
-                insertFields: dialectProvider.GetNonDefaultValueInsertFields<T>(obj));
+            var pkField = ModelDefinition<T>.Definition.PrimaryKey;
+            object id = null;
+            var enableIdentityInsert = pkField?.AutoIncrement == true && obj.TryGetValue(pkField.Name, out id);
 
-            return await InsertInternalAsync<T>(dialectProvider, dbCmd, obj, commandFilter, selectIdentity, token);
+            try
+            {
+                if (enableIdentityInsert)
+                    await dialectProvider.EnableIdentityInsertAsync<T>(dbCmd, token);
+                
+                dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd,
+                    insertFields: dialectProvider.GetNonDefaultValueInsertFields<T>(obj),
+                    shouldInclude: f => obj.ContainsKey(f.Name));
+
+                var ret = await InsertInternalAsync<T>(dialectProvider, dbCmd, obj, commandFilter, selectIdentity, token);
+                if (enableIdentityInsert)
+                    return Convert.ToInt64(id);
+                return ret;
+            }
+            finally
+            {
+                if (enableIdentityInsert)
+                    await dialectProvider.DisableIdentityInsertAsync<T>(dbCmd, token);
+            }
         }
 
         private static async Task<long> InsertInternalAsync<T>(IOrmLiteDialectProvider dialectProvider,
@@ -326,7 +344,11 @@ namespace ServiceStack.OrmLite
             }
 
             if (selectIdentity)
-                return await dialectProvider.InsertAndGetLastInsertIdAsync<T>(dbCmd, token);
+            {
+                dbCmd.CommandText += dialectProvider.GetLastInsertIdSqlSuffix<T>();
+
+                return await dbCmd.ExecLongScalarAsync();
+            }
 
             return await dbCmd.ExecNonQueryAsync(token);
         }
@@ -611,7 +633,7 @@ namespace ServiceStack.OrmLite
             if (to is ulong u && modelDef.RowVersion.ColumnType == typeof(byte[]))
                 return BitConverter.GetBytes(u);
             
-            return to;
+            return to ?? modelDef.RowVersion.ColumnType.GetDefaultValue();
         }
     }
 }

@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -283,7 +285,8 @@ namespace ServiceStack.OrmLite.PostgreSQL
         public override bool HasInsertReturnValues(ModelDefinition modelDef) =>
             modelDef.FieldDefinitions.Any(x => x.ReturnOnInsert || (x.AutoId && x.FieldType == typeof(Guid)));
 
-        public override void PrepareParameterizedInsertStatement<T>(IDbCommand cmd, ICollection<string> insertFields = null)
+        public override void PrepareParameterizedInsertStatement<T>(IDbCommand cmd, ICollection<string> insertFields = null, 
+            Func<FieldDefinition,bool> shouldInclude=null)
         {
             var sbColumnNames = StringBuilderCache.Allocate();
             var sbColumnValues = StringBuilderCacheAlt.Allocate();
@@ -301,7 +304,8 @@ namespace ServiceStack.OrmLite.PostgreSQL
                     sbReturningColumns.Append(GetQuotedColumnName(fieldDef.FieldName));
                 }
 
-                if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                if ((ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                    && shouldInclude?.Invoke(fieldDef) != true)
                     continue;
 
                 if (sbColumnNames.Length > 0)
@@ -313,7 +317,7 @@ namespace ServiceStack.OrmLite.PostgreSQL
                 {
                     sbColumnNames.Append(GetQuotedColumnName(fieldDef.FieldName));
 
-                    sbColumnValues.Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName)));
+                    sbColumnValues.Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName),fieldDef.CustomInsert));
                     AddParameter(cmd, fieldDef);
                 }
                 catch (Exception ex)
@@ -571,13 +575,64 @@ namespace ServiceStack.OrmLite.PostgreSQL
 
             return "; " + SelectIdentitySql;
         }
+        
+        public Dictionary<Type,NpgsqlDbType> TypesMap { get; } = new Dictionary<Type, NpgsqlDbType>
+        {
+            [typeof(bool)] = NpgsqlDbType.Boolean,
+            [typeof(short)] = NpgsqlDbType.Smallint,
+            [typeof(int)] = NpgsqlDbType.Integer,
+            [typeof(long)] = NpgsqlDbType.Bigint,
+            [typeof(float)] = NpgsqlDbType.Real,
+            [typeof(double)] = NpgsqlDbType.Double,
+            [typeof(decimal)] = NpgsqlDbType.Numeric,
+            [typeof(string)] = NpgsqlDbType.Text,
+            [typeof(char[])] = NpgsqlDbType.Varchar,
+            [typeof(char)] = NpgsqlDbType.Char,
+            [typeof(NpgsqlPoint)] = NpgsqlDbType.Point,
+            [typeof(NpgsqlLSeg)] = NpgsqlDbType.LSeg,
+            [typeof(NpgsqlPath)] = NpgsqlDbType.Path,
+            [typeof(NpgsqlPolygon)] = NpgsqlDbType.Polygon,
+            [typeof(NpgsqlLine)] = NpgsqlDbType.Line,
+            [typeof(NpgsqlCircle)] = NpgsqlDbType.Circle,
+            [typeof(NpgsqlBox)] = NpgsqlDbType.Box,
+            [typeof(BitArray)] = NpgsqlDbType.Varbit,
+            [typeof(IDictionary<string, string>)] = NpgsqlDbType.Hstore,
+            [typeof(Guid)] = NpgsqlDbType.Uuid,
+            [typeof(NpgsqlInet)] = NpgsqlDbType.Cidr,
+            [typeof(ValueTuple<IPAddress,int>)] = NpgsqlDbType.Inet,
+            [typeof(IPAddress)] = NpgsqlDbType.Inet,
+            [typeof(PhysicalAddress)] = NpgsqlDbType.MacAddr,
+            [typeof(NpgsqlTsQuery)] = NpgsqlDbType.TsQuery,
+            [typeof(NpgsqlTsVector)] = NpgsqlDbType.TsVector,
+            [typeof(NpgsqlDate)] = NpgsqlDbType.Date,
+            [typeof(DateTime)] = NpgsqlDbType.Timestamp,
+            [typeof(DateTimeOffset)] = NpgsqlDbType.TimestampTz,
+            [typeof(TimeSpan)] = NpgsqlDbType.Time,
+            [typeof(NpgsqlTimeSpan)] = NpgsqlDbType.Time,
+            [typeof(byte[])] = NpgsqlDbType.Bytea,
+            [typeof(uint)] = NpgsqlDbType.Oid,
+            [typeof(uint[])] = NpgsqlDbType.Oidvector,
+        };
 
-        public static Dictionary<string, NpgsqlDbType> NativeTypes = new Dictionary<string, NpgsqlDbType> {
+        public NpgsqlDbType GetDbType<T>() => GetDbType(typeof(T));
+        public NpgsqlDbType GetDbType(Type type)
+        {
+            if (PostgreSqlDialect.Instance.TypesMap.TryGetValue(type, out var paramType))
+                return paramType;
+            var genericEnum = type.GetTypeWithGenericTypeDefinitionOf(typeof(IEnumerable<>));
+            if (genericEnum != null)
+                return GetDbType(genericEnum.GenericTypeArguments[0]) | NpgsqlDbType.Array;
+            
+            throw new NotSupportedException($"Type '{type.Name}' not found in 'TypesMap'");
+        }
+        
+        public Dictionary<string, NpgsqlDbType> NativeTypes = new Dictionary<string, NpgsqlDbType> {
             { "json", NpgsqlDbType.Json },
             { "jsonb", NpgsqlDbType.Jsonb },
             { "hstore", NpgsqlDbType.Hstore },
             { "text[]", NpgsqlDbType.Array | NpgsqlDbType.Text },
             { "short[]", NpgsqlDbType.Array | NpgsqlDbType.Smallint },
+            { "int[]", NpgsqlDbType.Array | NpgsqlDbType.Integer },
             { "integer[]", NpgsqlDbType.Array | NpgsqlDbType.Integer },
             { "bigint[]", NpgsqlDbType.Array | NpgsqlDbType.Bigint },
             { "real[]", NpgsqlDbType.Array | NpgsqlDbType.Real },
@@ -585,6 +640,8 @@ namespace ServiceStack.OrmLite.PostgreSQL
             { "numeric[]", NpgsqlDbType.Array | NpgsqlDbType.Numeric },
             { "timestamp[]", NpgsqlDbType.Array | NpgsqlDbType.Timestamp },
             { "timestamp with time zone[]", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz },
+            { "bool[]", NpgsqlDbType.Array | NpgsqlDbType.Boolean },
+            { "boolean[]", NpgsqlDbType.Array | NpgsqlDbType.Boolean },
         };
         
         public override void SetParameter(FieldDefinition fieldDef, IDbDataParameter p)
@@ -665,32 +722,32 @@ namespace ServiceStack.OrmLite.PostgreSQL
         }
 
 #if ASYNC
-        public override Task OpenAsync(IDbConnection db, CancellationToken token = default(CancellationToken))
+        public override Task OpenAsync(IDbConnection db, CancellationToken token = default)
         {
             return Unwrap(db).OpenAsync(token);
         }
 
-        public override Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        public override Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default)
         {
             return Unwrap(cmd).ExecuteReaderAsync(token).Then(x => (IDataReader)x);
         }
 
-        public override Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        public override Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default)
         {
             return Unwrap(cmd).ExecuteNonQueryAsync(token);
         }
 
-        public override Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token = default(CancellationToken))
+        public override Task<object> ExecuteScalarAsync(IDbCommand cmd, CancellationToken token = default)
         {
             return Unwrap(cmd).ExecuteScalarAsync(token);
         }
 
-        public override Task<bool> ReadAsync(IDataReader reader, CancellationToken token = default(CancellationToken))
+        public override Task<bool> ReadAsync(IDataReader reader, CancellationToken token = default)
         {
             return Unwrap(reader).ReadAsync(token);
         }
 
-        public override async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
+        public override async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default)
         {
             try
             {
@@ -708,7 +765,7 @@ namespace ServiceStack.OrmLite.PostgreSQL
             }
         }
 
-        public override async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = default(CancellationToken))
+        public override async Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = default)
         {
             try
             {
@@ -724,7 +781,7 @@ namespace ServiceStack.OrmLite.PostgreSQL
             }
         }
 
-        public override async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = default(CancellationToken))
+        public override async Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = default)
         {
             try
             {

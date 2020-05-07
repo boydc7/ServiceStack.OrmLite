@@ -289,7 +289,8 @@ namespace ServiceStack.OrmLite.Oracle
             return StringBuilderCache.ReturnAndFree(sql);
         }
 
-        public override void PrepareParameterizedInsertStatement<T>(IDbCommand dbCommand, ICollection<string> insertFields = null)
+        public override void PrepareParameterizedInsertStatement<T>(IDbCommand dbCommand, ICollection<string> insertFields = null, 
+            Func<FieldDefinition,bool> shouldInclude=null)
         {
             var sbColumnNames = StringBuilderCache.Allocate();
             var sbColumnValues = StringBuilderCacheAlt.Allocate();
@@ -301,7 +302,8 @@ namespace ServiceStack.OrmLite.Oracle
             var fieldDefs = GetInsertFieldDefinitions(modelDef, insertFields);
             foreach (var fieldDef in fieldDefs)
             {
-                if ((fieldDef.IsComputed && !fieldDef.IsPersisted) || fieldDef.IsRowVersion) 
+                if (((fieldDef.IsComputed && !fieldDef.IsPersisted) || fieldDef.IsRowVersion)
+                    && shouldInclude?.Invoke(fieldDef) != true) 
                     continue;
 
                 if (sbColumnNames.Length > 0) sbColumnNames.Append(",");
@@ -310,7 +312,7 @@ namespace ServiceStack.OrmLite.Oracle
                 try
                 {
                     sbColumnNames.Append(GetQuotedColumnName(fieldDef.FieldName));
-                    sbColumnValues.Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName)));
+                    sbColumnValues.Append(this.GetParam(SanitizeFieldNameForParamName(fieldDef.FieldName),fieldDef.CustomInsert));
 
                     AddParameter(dbCommand, fieldDef);
                 }
@@ -417,9 +419,9 @@ namespace ServiceStack.OrmLite.Oracle
 
                 try
                 {
-                    sbColumnNames.Append(string.Format("{0}", GetQuotedColumnName(fieldDef.FieldName)));
+                    sbColumnNames.Append($"{GetQuotedColumnName(fieldDef.FieldName)}");
                     if (!string.IsNullOrEmpty(fieldDef.Sequence) && dbCommand == null)
-                        sbColumnValues.Append(string.Format(":{0}", fieldDef.Name));
+                        sbColumnValues.Append($":{fieldDef.Name}");
                     else
                         sbColumnValues.Append(fieldDef.GetQuotedValue(objWithProperties));
                 }
@@ -474,7 +476,7 @@ namespace ServiceStack.OrmLite.Oracle
                 sql
                     .Append(GetQuotedColumnName(fieldDef.FieldName))
                     .Append("=")
-                    .Append(this.AddUpdateParam(dbCmd, fieldDef.GetValue(objWithProperties), fieldDef).ParameterName);
+                    .Append(this.GetUpdateParam(dbCmd, fieldDef.GetValue(objWithProperties), fieldDef));
             }
 
             var strFilter = StringBuilderCacheAlt.ReturnAndFree(sqlFilter);
